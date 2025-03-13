@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -17,18 +18,24 @@ builder.WebHost.UseUrls("http://*:5000");
 var app = builder.Build();
 
 // Конфигурация
-var groundControlUrl = "http://ground-control:5001"; // URL сервиса диспетчера руления
+var passengerServiceUrl = "http://passenger-service:5001"; // URL сервиса пассажиров
 var groundServiceUrl = "http://ground-service:5002"; // URL сервиса управления наземным обслуживанием
-var passengerServiceUrl = "http://passenger-service:5003"; // URL сервиса пассажиров
+var groundControlUrl = "http://ground-control:5003"; // URL сервиса наземного диспетчера
 var httpClient = new HttpClient();
 
-// Эндпоинт для получения данных о пассажирах и багаже
-app.MapPost("/transport_passengers", async context =>
+// Накопитель пассажиров
+var passengerQueue = new Dictionary<string, List<int>>(); // Ключ: рейс, Значение: список ID пассажиров
+
+// Накопитель багажа
+var baggageQueue = new Dictionary<string, List<int>>(); // Ключ: рейс, Значение: список ID багажа
+
+// Эндпоинт для получения данных о пассажирах
+app.MapPost("/transportation-pass", async context =>
 {
-    Console.WriteLine("Получен запрос на перевозку пассажиров и багажа");
+    Console.WriteLine("Получен запрос на перевозку пассажира");
 
     // Чтение данных из тела запроса
-    var requestBody = await context.Request.ReadFromJsonAsync<TransportRequest>();
+    var requestBody = await context.Request.ReadFromJsonAsync<PassengerRequest>();
     if (requestBody == null)
     {
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -36,81 +43,127 @@ app.MapPost("/transport_passengers", async context =>
         return;
     }
 
-    // Обновление статуса пассажиров
-    foreach (var passenger in requestBody.Passengers)
+    // Добавление пассажира в накопитель
+    if (!passengerQueue.ContainsKey(requestBody.FlightId))
     {
-        await UpdatePassengerStatusAsync(passenger);
+        passengerQueue[requestBody.FlightId] = new List<int>();
+    }
+    passengerQueue[requestBody.FlightId].Add(requestBody.PassengerId);
+
+    Console.WriteLine($"Пассажир {requestBody.PassengerId} добавлен в накопитель для рейса {requestBody.FlightId}");
+
+    // Проверка, достигнуто ли 50 пассажиров
+    if (passengerQueue[requestBody.FlightId].Count >= 50)
+    {
+        Console.WriteLine($"Набрано 50 пассажиров для рейса {requestBody.FlightId}. Отправка автобуса.");
+        await TransportPassengersAsync(requestBody.FlightId);
     }
 
-    // Получение маршрута от диспетчера руления
-    var route = await GetRouteFromGroundControlAsync();
+    await context.Response.WriteAsync("Пассажир успешно добавлен в накопитель");
+});
 
-    // Перевозка пассажиров и багажа
-    await TransportPassengersAsync(requestBody.Passengers, route);
-    await TransportBaggageAsync(requestBody.Baggage, route);
+// Эндпоинт для получения данных о багаже
+app.MapPost("/transportation-bagg", async context =>
+{
+    Console.WriteLine("Получен запрос на перевозку багажа");
 
-    // Отправка отчета в управление наземным обслуживанием
-    await SendReportToGroundServiceAsync("Перевозка завершена успешно");
+    // Чтение данных из тела запроса
+    var requestBody = await context.Request.ReadFromJsonAsync<BaggageRequest>();
+    if (requestBody == null)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsync("Неверный формат запроса");
+        return;
+    }
 
-    await context.Response.WriteAsync("Пассажиры и багаж успешно перевезены");
+    // Добавление багажа в накопитель
+    if (!baggageQueue.ContainsKey(requestBody.FlightId))
+    {
+        baggageQueue[requestBody.FlightId] = new List<int>();
+    }
+    baggageQueue[requestBody.FlightId].Add(requestBody.BaggageId);
+
+    Console.WriteLine($"Багаж {requestBody.BaggageId} добавлен в накопитель для рейса {requestBody.FlightId}");
+
+    await context.Response.WriteAsync("Багаж успешно добавлен в накопитель");
 });
 
 // Запуск приложения
 app.Run();
 
-// Метод для обновления статуса пассажира
-async Task UpdatePassengerStatusAsync(Passenger passenger)
-{
-    try
-    {
-        var json = JsonSerializer.Serialize(passenger);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-        var response = await httpClient.PutAsync($"{passengerServiceUrl}/api/passengers/{passenger.Id}", content);
-        response.EnsureSuccessStatusCode();
-        Console.WriteLine($"Статус пассажира {passenger.Id} обновлен на 'транспортировка'");
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Ошибка при обновлении статуса пассажира: {ex.Message}");
-    }
-}
-
-// Метод для получения маршрута от диспетчера руления
-async Task<string> GetRouteFromGroundControlAsync()
-{
-    try
-    {
-        var response = await httpClient.GetAsync($"{groundControlUrl}/api/route");
-        response.EnsureSuccessStatusCode();
-        var route = await response.Content.ReadAsStringAsync();
-        Console.WriteLine($"Получен маршрут: {route}");
-        return route;
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Ошибка при получении маршрута: {ex.Message}");
-        return string.Empty;
-    }
-}
-
 // Метод для перевозки пассажиров
-async Task TransportPassengersAsync(List<Passenger> passengers, string route)
+async Task TransportPassengersAsync(string flightId)
 {
-    foreach (var passenger in passengers)
+    // Получение данных о самолете от управления наземным обслуживанием
+    var (planeId, gateNumber) = await GetPlaneInfoAsync(flightId);
+    if (planeId == null || gateNumber == null)
     {
-        Console.WriteLine($"Пассажир {passenger.Id} перевозится по маршруту: {route}");
-        await Task.Delay(100); // Имитация задержки перевозки
+        Console.WriteLine($"Не удалось получить данные о самолете для рейса {flightId}");
+        return;
+    }
+
+    // Запрос разрешения на выезд из гаража
+    var vehicleType = "bus";
+    var garageResponse = await httpClient.PostAsync($"{groundControlUrl}/garage/{vehicleType}", null);
+    if (!garageResponse.IsSuccessStatusCode)
+    {
+        Console.WriteLine("Не удалось получить разрешение на выезд из гаража");
+        return;
+    }
+
+    // Получение маршрута к самолету
+    var currentPoint = "garage";
+    var route = await GetRouteToPlaneAsync(currentPoint, planeId);
+    if (route == null)
+    {
+        Console.WriteLine("Не удалось получить маршрут к самолету");
+        return;
+    }
+
+    Console.WriteLine($"Автобус отправляется по маршруту: {route}");
+
+    // Перевозка пассажиров
+    var passengers = passengerQueue[flightId];
+    Console.WriteLine($"Перевозка {passengers.Count} пассажиров на рейс {flightId}");
+    passengerQueue.Remove(flightId); // Очистка накопителя
+
+    // Отправка отчета в управление наземным обслуживанием
+    await SendReportToGroundServiceAsync($"Пассажиры рейса {flightId} успешно перевезены");
+}
+
+// Метод для получения данных о самолете
+async Task<(string PlaneId, string GateNumber)> GetPlaneInfoAsync(string flightId)
+{
+    try
+    {
+        var response = await httpClient.GetAsync($"{groundServiceUrl}/api/plane-info/{flightId}");
+        response.EnsureSuccessStatusCode();
+        var content = await response.Content.ReadAsStringAsync();
+        var planeInfo = JsonSerializer.Deserialize<PlaneInfoResponse>(content);
+        return (planeInfo.PlaneId, planeInfo.GateNumber);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Ошибка при получении данных о самолете: {ex.Message}");
+        return (null, null);
     }
 }
 
-// Метод для перевозки багажа
-async Task TransportBaggageAsync(List<Baggage> baggage, string route)
+// Метод для получения маршрута к самолету
+async Task<string> GetRouteToPlaneAsync(string currentPoint, string planeId)
 {
-    foreach (var bag in baggage)
+    for (int attempt = 0; attempt < 5; attempt++)
     {
-        Console.WriteLine($"Багаж {bag.Id} перевозится по маршруту: {route}");
-        await Task.Delay(100); // Имитация задержки перевозки
+        var response = await httpClient.GetAsync($"{groundControlUrl}/plane/{currentPoint}/{planeId}");
+        if (response.IsSuccessStatusCode)
+        {
+            var route = await response.Content.ReadAsStringAsync();
+            return route;
+        }
+        await Task.Delay(1000); // Задержка перед повторным запросом
     }
+    Console.WriteLine("Не удалось получить маршрут после 5 попыток");
+    return null;
 }
 
 // Метод для отправки отчета в управление наземным обслуживанием
@@ -130,23 +183,20 @@ async Task SendReportToGroundServiceAsync(string report)
 }
 
 // Модели данных
-public class TransportRequest
+public class PassengerRequest
 {
-    public List<Passenger> Passengers { get; set; }
-    public List<Baggage> Baggage { get; set; }
-}
-
-public class Passenger
-{
-    public int Id { get; set; }
-    public string Status { get; set; }
-    public bool IsVip { get; set; }
-    public int BaggageId { get; set; }
-}
-
-public class Baggage
-{
-    public int Id { get; set; }
     public int PassengerId { get; set; }
-    public string Status { get; set; }
+    public string FlightId { get; set; }
+}
+
+public class BaggageRequest
+{
+    public int BaggageId { get; set; }
+    public string FlightId { get; set; }
+}
+
+public class PlaneInfoResponse
+{
+    public string PlaneId { get; set; }
+    public string GateNumber { get; set; }
 }
