@@ -1,0 +1,18 @@
+[
+  {
+    "passenger_id": 1,
+    "flight_id": 123
+  },
+  {
+    "passenger_id": 2,
+    "flight_id": 123
+  },
+  {
+    "passenger_id": 1,
+    "flight_id": 123
+  },
+  {
+    "passenger_id": 2,
+    "flight_id": 123
+  }
+]
