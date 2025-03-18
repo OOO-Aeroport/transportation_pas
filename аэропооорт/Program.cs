@@ -10,17 +10,17 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://192.168.0.43:5555"); // Укажите нужный URL
+builder.WebHost.UseUrls("http://26.132.135.106:5556"); // Укажите нужный URL
 
 var app = builder.Build();
 
 var httpClient = new HttpClient();
 
 // URL-адреса серверов (все моки будут на одном порту)
-const string groundControlUrl = "http://192.168.0.43:5555"; // УНО и диспетчер
-const string boardServiceUrl = "http://192.168.0.43:5555"; // Борт
-const string passengerServiceUrl = "http://192.168.0.43:5555"; // Пассажиры
-const string unoServiceUrl = "http://192.168.0.43:5555"; // УНО
+const string groundControlUrl = "http://26.21.3.228:5555/dispatcher"; // УНО и диспетчер
+const string boardServiceUrl = "http://26.125.155.211:5555"; // Борт
+const string passengerServiceUrl = "http://26.49.89.37:5555"; // Пассажиры
+const string unoServiceUrl = "http://26.132.135.106:5555"; // УНО
 
 var passengerQueue = new ConcurrentQueue<PassengerRequest>();
 var activeOrders = new ConcurrentDictionary<int, PassengerRequest>();
@@ -356,42 +356,71 @@ async Task<List<int>> GetRouteToGarage(int currentPoint)
 async Task<bool> MoveAlongRoute(List<int> route, MovementState state, int flightId, string routeType)
 {
     int lastPoint = state.CurrentPoint;
+    int newRouteAttempts = 0; // Счетчик запросов нового маршрута
 
-    foreach (var targetPoint in route)
+    while (true)
     {
-        if (!await RequestMovementWithRetry(state.CurrentPoint, targetPoint, state))
+        foreach (var targetPoint in route)
         {
-            Console.WriteLine($"[MOVE] Failed to get permission to move from {state.CurrentPoint} to {targetPoint}");
-            return false;
-        }
-
-        state.CurrentPoint = targetPoint;
-        Console.WriteLine($"[MOVE] Moved to point {state.CurrentPoint}");
-
-        await Task.Delay(500); // Имитация времени движения
-
-        if (state.CurrentPoint == lastPoint)
-        {
-            state.AttemptsWithoutMovement++;
-            if (state.AttemptsWithoutMovement >= 5)
+            // Запрос разрешения на передвижение
+            if (await RequestMovementWithRetry(state.CurrentPoint, targetPoint, state))
             {
-                Console.WriteLine($"[MOVE] Stuck at point {state.CurrentPoint}. Requesting new route...");
-                var newRoute = await GetNewRoute(state.CurrentPoint, flightId, routeType);
-                if (newRoute == null)
+                // Обновляем текущую точку
+                state.CurrentPoint = targetPoint;
+                Console.WriteLine($"Moved to point {state.CurrentPoint}");
+                // Имитация времени движения
+                await Task.Delay(500);
+
+                // Сбрасываем счетчик при успешном перемещении
+                state.AttemptsWithoutMovement = 0;
+            }
+            else
+            {
+                Console.WriteLine($"Failed to get permission to move from {state.CurrentPoint} to {targetPoint}");
+
+                // Если не двигаемся, увеличиваем счетчик
+                if (state.CurrentPoint == lastPoint)
                 {
-                    return false;
+                    state.AttemptsWithoutMovement++;
+                    if (state.AttemptsWithoutMovement >= 5)
+                    {
+                        Console.WriteLine($"Stuck at point {state.CurrentPoint}. Requesting new route...");
+                        var newRoute = await GetNewRoute(state.CurrentPoint, flightId, routeType);
+                        if (newRoute == null)
+                        {
+                            Console.WriteLine($"Failed to get new route. Aborting.");
+                            return false;
+                        }
+
+                        // Увеличиваем счетчик запросов нового маршрута
+                        newRouteAttempts++;
+                        if (newRouteAttempts >= 3) // Лимит запросов нового маршрута
+                        {
+                            Console.WriteLine($"Too many attempts to get new route. Aborting.");
+                            return false;
+                        }
+
+                        // Продолжаем движение по новому маршруту
+                        route = newRoute;
+                        break; // Выходим из цикла foreach и начинаем заново с новым маршрутом
+                    }
                 }
-                return await MoveAlongRoute(newRoute, state, flightId, routeType);
+                else
+                {
+                    // Если текущая точка изменилась, сбрасываем счетчик
+                    state.AttemptsWithoutMovement = 0;
+                }
+
+                lastPoint = state.CurrentPoint;
             }
         }
-        else
-        {
-            state.AttemptsWithoutMovement = 0;
-        }
 
-        lastPoint = state.CurrentPoint;
+        // Если все точки маршрута пройдены, возвращаем true
+        if (state.CurrentPoint == route[route.Count - 1])
+        {
+            return true;
+        }
     }
-    return true;
 }
 
 async Task<bool> RequestMovementWithRetry(int from, int to, MovementState state)
@@ -415,6 +444,7 @@ async Task<bool> RequestMovement(int from, int to)
 
 async Task<List<int>> GetNewRoute(int currentPoint, int flightId, string routeType)
 {
+    Console.WriteLine("Getting new route");
     if (routeType == "plane")
     {
         return await GetRouteToPlane(currentPoint, flightId);
@@ -436,7 +466,7 @@ async Task<List<int>> GetNewRoute(int currentPoint, int flightId, string routeTy
 
 async Task<bool> NotifyBoardAboutPassengers(int aircraftId, string action)
 {
-    var response = await httpClient.GetAsync($"{boardServiceUrl}/passengers-{action}/{aircraftId}");
+    var response = await httpClient.GetAsync($"{boardServiceUrl}/passengers_{action}/{aircraftId}");
     return response.IsSuccessStatusCode;
 }
 
@@ -460,7 +490,7 @@ async Task<bool> ReportSuccessToUNO(int orderId, string serviceName)
 
 async Task<bool> NotifyGarageFree(int endPoint)
 {
-    var response = await httpClient.GetAsync($"{groundControlUrl}/garage/free/{endPoint}");
+    var response = await httpClient.DeleteAsync($"{groundControlUrl}/garage/free/{endPoint}");
     return response.IsSuccessStatusCode;
 }
 
