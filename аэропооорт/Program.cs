@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -21,6 +22,7 @@ const string groundControlUrl = "http://26.21.3.228:5555/dispatcher"; // УНО 
 const string boardServiceUrl = "http://26.125.155.211:5555"; // Борт
 const string passengerServiceUrl = "http://26.49.89.37:5555"; // Пассажиры
 const string unoServiceUrl = "http://26.132.135.106:5555"; // УНО
+const string Marat = "http://26.132.135.106:5555"; // УНО
 
 var passengerQueue = new ConcurrentQueue<PassengerRequest>();
 var activeOrders = new ConcurrentDictionary<int, PassengerRequest>();
@@ -125,7 +127,7 @@ async Task ProcessDischargeOrderAsync(PassengerRequest order)
     await Task.Delay(5000); // 5 секунд задержки
 
     // 7. Отправка отчета в УНО
-    if (!await ReportSuccessToUNO(order.OrderId, "passenger-service"))
+    if (!await ReportSuccessToUNO(order.OrderId, "discharge"))
     {
         Console.WriteLine($"[DISCHARGE] Failed to report success to UNO for order {order.OrderId}");
         return;
@@ -257,7 +259,7 @@ async Task ProcessLoadOrderAsync(PassengerRequest order)
     Console.WriteLine($"[LOAD] Notified board about passengers loading for order {order.OrderId}");
 
     // 11. Отправка отчета в УНО
-    if (!await ReportSuccessToUNO(order.OrderId, "passenger-service"))
+    if (!await ReportSuccessToUNO(order.OrderId, "loading"))
     {
         Console.WriteLine($"[LOAD] Failed to report success to UNO for order {order.OrderId}");
         return;
@@ -369,7 +371,7 @@ async Task<bool> MoveAlongRoute(List<int> route, MovementState state, int flight
                 state.CurrentPoint = targetPoint;
                 Console.WriteLine($"Moved to point {state.CurrentPoint}");
                 // Имитация времени движения
-                await Task.Delay(500);
+                await TimeOut(40);
 
                 // Сбрасываем счетчик при успешном перемещении
                 state.AttemptsWithoutMovement = 0;
@@ -484,13 +486,28 @@ async Task<bool> NotifyPassengersAboutTransport(List<Passenger> passengers)
 
 async Task<bool> ReportSuccessToUNO(int orderId, string serviceName)
 {
-    var response = await httpClient.PostAsync($"{unoServiceUrl}/uno/api/v1/order/successReport/{orderId}/{serviceName}", null);
+    // Формируем URL с orderId и serviceName
+    var url = $"{unoServiceUrl}/uno/api/v1/order/successReport/{orderId}/passengers-{serviceName}";
+
+    // Создаем пустое тело запроса (если сервер не требует данных)
+    var content = new StringContent(string.Empty, Encoding.UTF8, "application/json");
+
+    // Отправляем POST-запрос
+    var response = await httpClient.PostAsync(url, content);
+
+    // Возвращаем true, если статус ответа успешный
     return response.IsSuccessStatusCode;
 }
 
 async Task<bool> NotifyGarageFree(int endPoint)
 {
     var response = await httpClient.DeleteAsync($"{groundControlUrl}/garage/free/{endPoint}");
+    return response.IsSuccessStatusCode;
+}
+
+async Task<bool> TimeOut(int time)
+{
+    var response = await httpClient.GetAsync($"{Marat}/dep-board/api/v1/{time}/timeout");
     return response.IsSuccessStatusCode;
 }
 
