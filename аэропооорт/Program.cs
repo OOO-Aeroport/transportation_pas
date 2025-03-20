@@ -135,7 +135,7 @@ async Task ProcessDischargeOrderAsync(PassengerRequest order)
     try
     {
         Console.WriteLine($"[DISCHARGE] Processing order {order.orderId} for flight {order.planeId}");
-        //await TimeOut(10);
+        await TimeOut(10);
 
         var state = new MovementState { CurrentPoint = 299 };
 
@@ -166,18 +166,18 @@ async Task ProcessDischargeOrderAsync(PassengerRequest order)
         //    Console.WriteLine($"[DISCHARGE] Failed to notify board about passengers unloading for order {order.orderId}");
         //    return;
         //}
-        //Console.WriteLine($"[DISCHARGE] Notified board about passengers unloading for order {order.orderId}");
+        Console.WriteLine($"[DISCHARGE] Notified board about passengers unloading for order {order.orderId}");
 
         Console.WriteLine($"[DISCHARGE] Passengers out of the plane for order {order.orderId}");
-        //await TimeOut(50);
-        await Task.Delay(1000);
+        await TimeOut(50);
+        
 
-        //if (!await ReportSuccessToUNO(order.orderId, "discharge"))
-        //{
-        //    Console.WriteLine($"[DISCHARGE] Failed to report success to UNO for order {order.orderId}");
-        //    return;
-        //}
-        //Console.WriteLine($"[DISCHARGE] Success reported to UNO for order {order.orderId}");
+        if (!await ReportSuccessToUNO(order.orderId, "discharge"))
+        {
+            Console.WriteLine($"[DISCHARGE] Failed to report success to UNO for order {order.orderId}");
+            return;
+        }
+        Console.WriteLine($"[DISCHARGE] Success reported to UNO for order {order.orderId}");
 
         var routeToTerminal = await GetRoutePlaneToTerminal1(state.CurrentPoint);
         if (routeToTerminal == null)
@@ -195,8 +195,8 @@ async Task ProcessDischargeOrderAsync(PassengerRequest order)
         Console.WriteLine($"[DISCHARGE] Arrived at terminal1 for order {order.orderId}");
 
         Console.WriteLine($"[DISCHARGE] Passengers out of the car for order {order.orderId}");
-        //await TimeOut(50);
-        await Task.Delay(1000);
+        await TimeOut(50);
+        
 
         var routeToGarage = await GetRouteToGarage(state.CurrentPoint);
         if (routeToGarage == null)
@@ -263,12 +263,12 @@ async Task ProcessLoadOrderAsync(PassengerRequest order)
         Console.WriteLine($"[LOAD] Passengers loaded into the car for order {order.orderId}");
         await TimeOut(50);
 
-        //if (!await NotifyPassengersAboutTransport(order.passengers))
-        //{
-        //    Console.WriteLine($"[LOAD] Failed to notify passengers about transport for order {order.orderId}");
-        //    return;
-        //}
-        //Console.WriteLine($"[LOAD] Passengers notified about transport for order {order.orderId}");
+        if (!await NotifyPassengersAboutTransport(order.passengers))
+        {
+            Console.WriteLine($"[LOAD] Failed to notify passengers about transport for order {order.orderId}");
+            return;
+        }
+        Console.WriteLine($"[LOAD] Passengers notified about transport for order {order.orderId}");
 
         var routeToPlane = await GetRouteT2ToPlane(state.CurrentPoint, order.planeId);
         if (routeToPlane == null)
@@ -293,14 +293,14 @@ async Task ProcessLoadOrderAsync(PassengerRequest order)
         //    Console.WriteLine($"[LOAD] Failed to notify board about passengers loading for order {order.orderId}");
         //    return;
         //}
-        //Console.WriteLine($"[LOAD] Notified board about passengers loading for order {order.orderId}");
+        Console.WriteLine($"[LOAD] Notified board about passengers loading for order {order.orderId}");
 
-        //if (!await ReportSuccessToUNO(order.orderId, "loading"))
-        //{
-        //    Console.WriteLine($"[LOAD] Failed to report success to UNO for order {order.orderId}");
-        //    return;
-        //}
-        //Console.WriteLine($"[LOAD] Success reported to UNO for order {order.orderId}");
+        if (!await ReportSuccessToUNO(order.orderId, "loading"))
+        {
+            Console.WriteLine($"[LOAD] Failed to report success to UNO for order {order.orderId}");
+            return;
+        }
+        Console.WriteLine($"[LOAD] Success reported to UNO for order {order.orderId}");
 
         var routeToGarage = await GetRouteToGarage(state.CurrentPoint);
         if (routeToGarage == null)
@@ -507,8 +507,7 @@ async Task<bool> MoveAlongRoute(List<int> route, MovementState state, int flight
             state.CurrentRoute.RemoveAt(0);
 
             // Имитация времени движения
-            //await TimeOut(40);
-            await Task.Delay(500);
+            await TimeOut(40);
 
             // Сбрасываем счетчик при успешном перемещении
             state.AttemptsWithoutMovement = 0;
