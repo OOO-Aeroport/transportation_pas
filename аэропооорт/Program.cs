@@ -28,7 +28,7 @@ app.MapGet("/", (HttpContext context) =>
 var httpClient = new HttpClient();
 
 // URL-адреса серверов (все моки будут на одном порту)
-const string groundControlUrl = "http://26.21.3.228:5555/dispatcher"; // УНО и диспетчер
+const string groundControlUrl = "http://26.34.23.177:5555/dispatcher"; // УНО и диспетчер
 const string boardServiceUrl = "http://26.125.155.211:5555"; // Борт
 const string passengerServiceUrl = "http://26.49.89.37:5555"; // Пассажиры
 const string unoServiceUrl = "http://26.53.143.176:5555"; // УНО
