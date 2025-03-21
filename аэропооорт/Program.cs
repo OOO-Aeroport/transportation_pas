@@ -15,6 +15,16 @@ builder.WebHost.UseUrls("http://26.132.135.106:5556"); // Укажите нуж�
 
 var app = builder.Build();
 
+// Настройка статических файлов
+app.UseStaticFiles();
+
+// Перенаправление корневого URL на index.html
+app.MapGet("/", (HttpContext context) =>
+{
+    context.Response.Redirect("/index.html");
+    return Task.CompletedTask;
+});
+
 var httpClient = new HttpClient();
 
 // URL-адреса серверов (все моки будут на одном порту)
@@ -130,6 +140,22 @@ app.MapPost("/passengers-loading", async (HttpContext context) =>
     }
 });
 
+// Эндпоинт для получения всех активных заказов
+app.MapGet("/active-order", (HttpContext context) =>
+{
+    try
+    {
+        // Получаем все активные заказы
+        var activeOrdersList = activeOrders.Values.ToList();
+        return Results.Json(activeOrdersList);
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error in /active-order: {ex.Message}");
+        return Results.StatusCode(500);
+    }
+});
+
 async Task ProcessDischargeOrderAsync(PassengerRequest order)
 {
     try
@@ -161,11 +187,11 @@ async Task ProcessDischargeOrderAsync(PassengerRequest order)
         }
         Console.WriteLine($"[DISCHARGE] Arrived at plane for order {order.orderId}");
 
-        //if (!await NotifyBoardAboutPassengers(order.planeId, "out"))
-        //{
-        //    Console.WriteLine($"[DISCHARGE] Failed to notify board about passengers unloading for order {order.orderId}");
-        //    return;
-        //}
+        if (!await NotifyBoardAboutPassengers(order.planeId, "out"))
+        {
+            Console.WriteLine($"[DISCHARGE] Failed to notify board about passengers unloading for order {order.orderId}");
+            return;
+        }
         Console.WriteLine($"[DISCHARGE] Notified board about passengers unloading for order {order.orderId}");
 
         Console.WriteLine($"[DISCHARGE] Passengers out of the plane for order {order.orderId}");
@@ -288,11 +314,11 @@ async Task ProcessLoadOrderAsync(PassengerRequest order)
         Console.WriteLine($"[LOAD] Passengers loaded into the plane for order {order.orderId}");
         await TimeOut(50);
 
-        //if (!await NotifyBoardAboutPassengersWithList(order.planeId, order.passengers))
-        //{
-        //    Console.WriteLine($"[LOAD] Failed to notify board about passengers loading for order {order.orderId}");
-        //    return;
-        //}
+        if (!await NotifyBoardAboutPassengersWithList(order.planeId, order.passengers))
+        {
+            Console.WriteLine($"[LOAD] Failed to notify board about passengers loading for order {order.orderId}");
+            return;
+        }
         Console.WriteLine($"[LOAD] Notified board about passengers loading for order {order.orderId}");
 
         if (!await ReportSuccessToUNO(order.orderId, "loading"))
